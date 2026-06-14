@@ -157,11 +157,11 @@ function Sidebar({ items, selectedId, sessions, activeSessionId, view, onView, o
   </aside>;
 }
 
-function SourcePanel({ documents, citations, onUpload }: { documents: DocumentItem[]; citations: Citation[]; onUpload: (file?: File) => void }) {
+function SourcePanel({ documents, citations, onUpload }: { documents: DocumentItem[]; citations: Citation[]; onUpload: (files?: FileList) => void }) {
   return <aside className="source-panel">
     <div className="source-head"><div><span className="kicker">KNOWLEDGE SOURCE</span><h3>资料与引用</h3></div><button className="icon-button"><Icon name="more" /></button></div>
     <div className="source-stat"><div className="progress-ring"><span>{documents.length}</span></div><div><strong>知识库资料</strong><small>{documents.filter((item) => item.status === "ready").length} 份已完成解析</small></div></div>
-    <label className="dropzone"><input type="file" accept=".pdf,.md,.txt" onChange={(e) => onUpload(e.target.files?.[0])} /><Icon name="upload" /><strong>添加资料</strong><span>PDF、Markdown 或 TXT</span></label>
+    <label className="dropzone"><input type="file" multiple accept=".pdf,.docx,.md,.txt,.csv,.html,.htm" onChange={(e) => onUpload(e.target.files || undefined)} /><Icon name="upload" /><strong>添加资料</strong><span>可批量上传 PDF、DOCX、Markdown、TXT、CSV 或 HTML</span></label>
     <div className="panel-section-title"><span>{citations.length ? "本轮引用" : "最近资料"}</span><small>{citations.length || documents.length}</small></div>
     <div className="source-list">
       {citations.map((citation) => <div className="citation-card" key={citation.chunk_id}><span className="file-icon"><Icon name="file" /></span><div><strong>{citation.filename}{citation.page_number ? ` · 第 ${citation.page_number} 页` : ""}</strong><p>{citation.excerpt}</p><small>相关度 {Math.round(citation.score * 100)}%</small></div></div>)}
@@ -172,14 +172,14 @@ function SourcePanel({ documents, citations, onUpload }: { documents: DocumentIt
   </aside>;
 }
 
-function DocumentManager({ documents, selected, onUpload, onDelete, onReprocess }: { documents: DocumentItem[]; selected?: KnowledgeBase; onUpload: (file?: File) => void; onDelete: (document: DocumentItem) => void; onReprocess: (document: DocumentItem) => void }) {
+function DocumentManager({ documents, selected, onUpload, onDelete, onReprocess }: { documents: DocumentItem[]; selected?: KnowledgeBase; onUpload: (files?: FileList) => void; onDelete: (document: DocumentItem) => void; onReprocess: (document: DocumentItem) => void }) {
   return <section className="document-manager">
-    <div className="manager-hero"><div><span className="kicker">DOCUMENT MANAGEMENT</span><h1>管理知识库资料</h1><p>上传、检查并维护「{selected?.name || "未选择知识库"}」中的文档。</p></div><label className="manager-upload"><input type="file" accept=".pdf,.md,.txt" onChange={(e) => onUpload(e.target.files?.[0])} /><Icon name="upload" />上传资料</label></div>
+    <div className="manager-hero"><div><span className="kicker">DOCUMENT MANAGEMENT</span><h1>管理知识库资料</h1><p>上传、检查并维护「{selected?.name || "未选择知识库"}」中的文档。</p></div><label className="manager-upload"><input type="file" multiple accept=".pdf,.docx,.md,.txt,.csv,.html,.htm" onChange={(e) => onUpload(e.target.files || undefined)} /><Icon name="upload" />批量上传资料</label></div>
     <div className="manager-summary"><div><strong>{documents.length}</strong><span>全部资料</span></div><div><strong>{documents.filter((item) => item.status === "ready").length}</strong><span>解析完成</span></div><div><strong>{documents.filter((item) => item.status === "processing").length}</strong><span>处理中</span></div><div><strong>{documents.filter((item) => item.status === "failed").length}</strong><span>解析失败</span></div></div>
     <div className="document-table">
       <div className="table-head"><span>文件名称</span><span>状态</span><span>上传时间</span><span>操作</span></div>
       {documents.map((document) => <div className="table-row" key={document.id}><span className="table-file"><span className="file-icon"><Icon name="file" /></span><span><strong>{document.filename}</strong><small>知识库文档</small></span></span><span><i className={`status-pill ${document.status}`}>{document.status === "ready" ? "解析完成" : document.status === "failed" ? "解析失败" : "处理中"}</i></span><span className="table-date">{new Date(document.created_at).toLocaleDateString("zh-CN")}</span><span className="table-actions"><button title="重新解析" onClick={() => onReprocess(document)}><Icon name="refresh" size={15} /></button><button title="删除文档" onClick={() => onDelete(document)}><Icon name="trash" size={15} /></button></span></div>)}
-      {!documents.length && <div className="manager-empty"><Icon name="file" size={28} /><strong>知识库还是空的</strong><span>上传 PDF、Markdown 或 TXT，系统会自动解析并生成向量。</span></div>}
+      {!documents.length && <div className="manager-empty"><Icon name="file" size={28} /><strong>知识库还是空的</strong><span>上传 PDF、DOCX、Markdown、TXT、CSV 或 HTML，系统会自动解析并生成向量。</span></div>}
     </div>
   </section>;
 }
@@ -325,13 +325,14 @@ function Workspace() {
     setDocuments([]);
     await refresh();
   };
-  const upload = async (file?: File) => {
-    if (!file || !selectedId) return;
-    setStatus(`正在解析 ${file.name}...`);
+  const upload = async (files?: FileList) => {
+    if (!files?.length || !selectedId) return;
+    const selectedFiles = Array.from(files);
+    setStatus(`正在提交 ${selectedFiles.length} 份资料...`);
     try {
-      await api.uploadDocument(selectedId, file);
+      for (const file of selectedFiles) await api.uploadDocument(selectedId, file);
       await refreshDocuments(selectedId);
-      setStatus("文档已提交，解析完成后即可提问。");
+      setStatus(`${selectedFiles.length} 份资料已提交，解析完成后即可提问。`);
       window.setTimeout(() => refreshDocuments(selectedId), 1200);
     } catch (e) { setStatus(e instanceof Error ? e.message : "上传失败"); }
   };

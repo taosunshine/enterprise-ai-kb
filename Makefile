@@ -1,4 +1,4 @@
-.PHONY: up down test eval
+.PHONY: up down test eval quality
 
 up:
 	docker compose up --build
@@ -11,3 +11,6 @@ test:
 
 eval:
 	cd backend && python -m evaluation.evaluate --document "$(DOCUMENT)"
+
+quality:
+	powershell -ExecutionPolicy Bypass -File scripts/quality-gate.ps1 -DocumentsDir "$(DOCUMENTS_DIR)"

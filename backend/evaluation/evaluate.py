@@ -14,17 +14,28 @@ import httpx
 from app.core.config import settings
 
 INSUFFICIENT_MARKERS = (
-    "不足",
-    "无法",
+    "资料不足",
+    "无法确认",
+    "无法依据",
     "未提供",
+    "没有提供",
+    "没有关于",
     "没有提及",
-    "不能确认",
     "不包含",
+    "未包含",
     "未说明",
-    "未承诺",
-    "并未承诺",
 )
-METRIC_VERSION = "2.0"
+METRIC_VERSION = "2.1"
+SUPPORTED_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".md", ".txt", ".csv", ".html", ".htm"}
+CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".html": "text/html",
+    ".htm": "text/html",
+}
 STOP_TOKENS = {
     "什么",
     "哪些",
@@ -62,7 +73,9 @@ def contains_any(text: str, values: list[str]) -> bool:
 def citation_is_relevant(citation: dict, case: dict) -> bool:
     page_hit = citation.get("page_number") in case.get("expected_pages", [])
     evidence_hit = contains_any(citation.get("excerpt", ""), case.get("expected_evidence_keywords", []))
-    return page_hit or evidence_hit
+    expected_documents = case.get("expected_documents", [])
+    document_hit = not expected_documents or citation.get("filename") in expected_documents
+    return document_hit and (page_hit or evidence_hit)
 
 
 def retrieval_hit(citations: list[dict], answer: str, case: dict) -> float:
@@ -89,7 +102,8 @@ def answer_keyword_coverage(answer: str, case: dict) -> float | None:
 
 
 def fact_numbers(text: str) -> set[str]:
-    normalized = normalize(text)
+    without_references = re.sub(r"【[^】]*】|\[Source\s+\d+\]", "", text, flags=re.IGNORECASE)
+    normalized = normalize(without_references)
     values = set(re.findall(r"\d+(?:\.\d+)?(?:万|亿|天|年|个|小时|工作日)", normalized))
     values.update(re.findall(r"(?<![\d.])\d{5,}(?![\d.])", normalized))
     return values
@@ -165,16 +179,31 @@ def authenticate(client: httpx.Client, email: str | None, password: str) -> tupl
     return response.json()["access_token"], email
 
 
+def post_with_rate_limit_retry(
+    client: httpx.Client,
+    url: str,
+    *,
+    attempts: int = 3,
+    **kwargs,
+) -> httpx.Response:
+    for attempt in range(attempts):
+        response = client.post(url, **kwargs)
+        if response.status_code != 429 or attempt == attempts - 1:
+            return response
+        time.sleep(max(1, int(response.headers.get("Retry-After", "1"))))
+    return response
+
+
 def prepare_knowledge_base(
     client: httpx.Client,
     headers: dict[str, str],
     knowledge_base_id: int | None,
-    document: Path | None,
+    documents: list[Path],
 ) -> int:
     if knowledge_base_id:
         return knowledge_base_id
-    if not document:
-        raise ValueError("--document is required when --knowledge-base-id is not provided")
+    if not documents:
+        raise ValueError("--document or --documents-dir is required when --knowledge-base-id is not provided")
     created = client.post(
         "/knowledge-bases",
         headers=headers,
@@ -182,31 +211,62 @@ def prepare_knowledge_base(
     )
     created.raise_for_status()
     knowledge_base_id = created.json()["id"]
-    with document.open("rb") as file:
-        uploaded = client.post(
-            f"/documents/upload?knowledge_base_id={knowledge_base_id}",
-            headers=headers,
-            files={"file": (document.name, file, "application/pdf")},
-        )
-    uploaded.raise_for_status()
-    document_id = uploaded.json()["id"]
-    for _ in range(120):
+    document_ids = []
+    for document in documents:
+        with document.open("rb") as file:
+            uploaded = post_with_rate_limit_retry(
+                client,
+                f"/documents/upload?knowledge_base_id={knowledge_base_id}",
+                headers=headers,
+                files={
+                    "file": (
+                        document.name,
+                        file,
+                        CONTENT_TYPES.get(document.suffix.lower(), "application/octet-stream"),
+                    )
+                },
+            )
+        uploaded.raise_for_status()
+        document_ids.append(uploaded.json()["id"])
+    for _ in range(max(120, len(document_ids) * 60)):
         listed = client.get(
             f"/documents?knowledge_base_id={knowledge_base_id}", headers=headers
         )
         listed.raise_for_status()
-        item = next(item for item in listed.json() if item["id"] == document_id)
-        if item["status"] == "ready":
+        items = {item["id"]: item for item in listed.json() if item["id"] in document_ids}
+        failed = [item for item in items.values() if item["status"] == "failed"]
+        if failed:
+            item = failed[0]
+            raise RuntimeError(
+                f"Document processing failed for {item['filename']}: {item['error_message']}"
+            )
+        if len(items) == len(document_ids) and all(item["status"] == "ready" for item in items.values()):
             return knowledge_base_id
-        if item["status"] == "failed":
-            raise RuntimeError(f"Document processing failed: {item['error_message']}")
         time.sleep(1)
-    raise TimeoutError("Document processing did not finish within 120 seconds")
+    raise TimeoutError("Document processing did not finish before the evaluation timeout")
+
+
+def collect_documents(document_args: list[Path], documents_dir: Path | None) -> list[Path]:
+    documents = [path.resolve() for path in document_args]
+    if documents_dir:
+        documents.extend(
+            sorted(
+                path.resolve()
+                for path in documents_dir.iterdir()
+                if path.is_file() and path.suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES
+            )
+        )
+    unique = list(dict.fromkeys(documents))
+    invalid = [path for path in unique if not path.is_file() or path.suffix.lower() not in SUPPORTED_DOCUMENT_SUFFIXES]
+    if invalid:
+        raise ValueError(f"Unsupported or missing documents: {', '.join(map(str, invalid))}")
+    return unique
 
 
 def evaluate_case(client: httpx.Client, headers: dict[str, str], kb_id: int, case: dict) -> dict:
     started = time.perf_counter()
-    response = client.post(
+    response = post_with_rate_limit_retry(
+        client,
         "/chat/ask",
         headers=headers,
         json={"knowledge_base_id": kb_id, "question": case["question"]},
@@ -294,7 +354,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the enterprise RAG evaluation set.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/api")
     parser.add_argument("--dataset", type=Path, default=Path(__file__).parent / "datasets" / "huawei_public_2026_06_13.json")
-    parser.add_argument("--document", type=Path)
+    parser.add_argument("--document", type=Path, action="append", default=[])
+    parser.add_argument("--documents-dir", type=Path)
     parser.add_argument("--email")
     parser.add_argument("--password", default="Evaluation123!")
     parser.add_argument("--knowledge-base-id", type=int)
@@ -307,10 +368,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     dataset = json.loads(args.dataset.read_text(encoding="utf-8"))
+    documents = collect_documents(args.document, args.documents_dir)
     with httpx.Client(base_url=args.base_url, timeout=180) as client:
         token, email = authenticate(client, args.email, args.password)
         headers = {"Authorization": f"Bearer {token}"}
-        kb_id = prepare_knowledge_base(client, headers, args.knowledge_base_id, args.document)
+        kb_id = prepare_knowledge_base(client, headers, args.knowledge_base_id, documents)
         rounds = []
         for round_number in range(1, args.rounds + 1):
             results = [
@@ -329,7 +391,11 @@ def main() -> int:
     report = {
         "created_at": datetime.now(UTC).isoformat(),
         "metric_version": METRIC_VERSION,
-        "dataset": {"name": dataset["name"], "version": dataset["version"]},
+        "dataset": {
+            "name": dataset["name"],
+            "version": dataset["version"],
+            "documents": [path.name for path in documents],
+        },
         "target": {"base_url": args.base_url, "email": email, "knowledge_base_id": kb_id},
         "configuration": {
             "llm_model": settings.llm_model,
@@ -357,11 +423,21 @@ def main() -> int:
     markdown_path.write_text(markdown_report(report), encoding="utf-8")
     print(json.dumps({"summary": summary, "json_report": str(json_path), "markdown_report": str(markdown_path)}, ensure_ascii=False, indent=2))
     if args.fail_under:
+        thresholds = dataset.get(
+            "thresholds",
+            {
+                "retrieval_hit_rate": 0.90,
+                "citation_accuracy": 0.80,
+                "faithfulness": 0.80,
+                "maximum_average_latency_seconds": 15,
+            },
+        )
         passed = (
-            summary["retrieval_hit_rate"]["minimum"] >= 0.90
-            and summary["citation_accuracy"]["minimum"] >= 0.80
-            and summary["faithfulness"]["minimum"] >= 0.80
-            and summary["average_latency_seconds"]["maximum"] <= 15
+            summary["retrieval_hit_rate"]["minimum"] >= thresholds["retrieval_hit_rate"]
+            and summary["citation_accuracy"]["minimum"] >= thresholds["citation_accuracy"]
+            and summary["faithfulness"]["minimum"] >= thresholds["faithfulness"]
+            and summary["average_latency_seconds"]["maximum"]
+            <= thresholds["maximum_average_latency_seconds"]
         )
         return 0 if passed else 1
     return 0

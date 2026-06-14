@@ -1,10 +1,13 @@
 import json
 import re
 from collections import Counter
+from csv import reader
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 
 import fitz
+from docx import Document as WordDocument
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -18,6 +21,22 @@ PAGE_NUMBER_PATTERN = re.compile(r"^(?:第\s*\d+\s*页|\d+\s*/\s*\d+|\d+)$")
 TOC_PATTERN = re.compile(r".+\.{3,}\s*\d+$")
 
 
+class TextHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "br", "tr"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def text(self) -> str:
+        return re.sub(r"\n{3,}", "\n\n", "".join(self.parts)).strip()
+
+
 @dataclass
 class StructuredChunk:
     content: str
@@ -28,9 +47,29 @@ class StructuredChunk:
 
 
 def extract_pages(path: Path) -> list[tuple[int | None, str]]:
-    if path.suffix.lower() == ".pdf":
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
         with fitz.open(path) as pdf:
             return [(index + 1, page.get_text()) for index, page in enumerate(pdf)]
+    if suffix == ".docx":
+        document = WordDocument(path)
+        lines = []
+        for paragraph in document.paragraphs:
+            text = normalized_line(paragraph.text)
+            if not text:
+                continue
+            lines.append(f"# {text}" if paragraph.style.name.startswith("Heading") else text)
+        for table in document.tables:
+            for row in table.rows:
+                lines.append(" | ".join(normalized_line(cell.text) for cell in row.cells))
+        return [(None, "\n".join(lines))]
+    if suffix == ".csv":
+        rows = reader(path.read_text(encoding="utf-8-sig", errors="ignore").splitlines())
+        return [(None, "\n".join(" | ".join(normalized_line(cell) for cell in row) for row in rows))]
+    if suffix in {".html", ".htm"}:
+        parser = TextHTMLParser()
+        parser.feed(path.read_text(encoding="utf-8", errors="ignore"))
+        return [(None, parser.text())]
     return [(None, path.read_text(encoding="utf-8", errors="ignore"))]
 
 
@@ -146,46 +185,42 @@ def split_text(text: str, size: int = 800, overlap: int = 120) -> list[str]:
 def process_document(document_id: int, db: Session) -> None:
     document = db.get(Document, document_id)
     if not document:
-        return
-    try:
-        document.status = "processing"
-        document.error_message = ""
-        document.chunks.clear()
-        db.flush()
-        pages = extract_pages(Path(document.file_path))
-        repeated_lines = repeated_margin_lines(pages)
-        index = 0
-        for page_number, page_text in pages:
-            cleaned = clean_page_text(page_text, repeated_lines)
-            for item in structured_split(cleaned, settings.chunk_size, settings.chunk_overlap):
-                if is_short_noise(item.content):
-                    continue
-                chunk = DocumentChunk(
-                    document_id=document.id,
-                    content=item.content,
-                    chunk_index=index,
-                    page_number=page_number,
-                    section_title=item.section_title,
-                    char_start=item.char_start,
-                    char_end=item.char_end,
-                    content_type=item.content_type,
+        raise ValueError("Document not found")
+    document.status = "processing"
+    document.error_message = ""
+    document.chunks.clear()
+    db.flush()
+    pages = extract_pages(Path(document.file_path))
+    repeated_lines = repeated_margin_lines(pages)
+    index = 0
+    for page_number, page_text in pages:
+        cleaned = clean_page_text(page_text, repeated_lines)
+        for item in structured_split(cleaned, settings.chunk_size, settings.chunk_overlap):
+            if is_short_noise(item.content):
+                continue
+            chunk = DocumentChunk(
+                document_id=document.id,
+                content=item.content,
+                chunk_index=index,
+                page_number=page_number,
+                section_title=item.section_title,
+                char_start=item.char_start,
+                char_end=item.char_end,
+                content_type=item.content_type,
+            )
+            db.add(chunk)
+            db.flush()
+            vector = embed_text(item.content)
+            db.add(
+                ChunkEmbedding(
+                    chunk_id=chunk.id,
+                    vector_json=json.dumps(vector),
+                    vector=vector,
+                    model=settings.embedding_model,
                 )
-                db.add(chunk)
-                db.flush()
-                vector = embed_text(item.content)
-                db.add(
-                    ChunkEmbedding(
-                        chunk_id=chunk.id,
-                        vector_json=json.dumps(vector),
-                        vector=vector,
-                        model=settings.embedding_model,
-                    )
-                )
-                index += 1
-        if index == 0:
-            raise ValueError("No readable text was extracted")
-        document.status = "ready"
-    except Exception as exc:
-        document.status = "failed"
-        document.error_message = str(exc)[:1000]
+            )
+            index += 1
+    if index == 0:
+        raise ValueError("No readable text was extracted")
+    document.status = "ready"
     db.commit()

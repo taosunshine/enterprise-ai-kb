@@ -91,3 +91,14 @@ class ChatSessionRead(ORMModel):
 
 class ChatSessionDetail(ChatSessionRead):
     messages: list[ChatMessageRead]
+
+
+class AuditLogRead(ORMModel):
+    id: int
+    action: str
+    resource_type: str
+    resource_id: str
+    status: str
+    ip_address: str
+    details_json: str
+    created_at: datetime
