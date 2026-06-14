@@ -1,4 +1,5 @@
 # 知境：企业 AI 创作知识库
+<img width="1902" height="1095" alt="image" src="https://github.com/user-attachments/assets/e7d29d95-f284-4dd8-8531-7076a5242ea3" />
 
 面向企业资料问答与内容创作的单用户知识库系统。项目已完成“功能完整 MVP”和第二阶段 RAG 质量冲刺，目前适合进行小范围企业试点，重点能力包括结构化文档解析、语义检索、Rerank、可信引用、拒答、会话历史、流式回答和知识库增强创作。
 
