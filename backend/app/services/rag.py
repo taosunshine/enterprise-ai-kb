@@ -20,6 +20,18 @@ logger = logging.getLogger("app.rag")
 logger.setLevel(logging.INFO)
 RankedMatch = tuple[DocumentChunk, Document, float]
 INSUFFICIENT_ANSWER = "当前知识库未检索到足够且可信的证据，无法依据现有资料回答。"
+INSUFFICIENT_MARKERS = (
+    "资料不足",
+    "无法确认",
+    "无法依据",
+    "未提供",
+    "没有提供",
+    "没有关于",
+    "没有提及",
+    "不包含",
+    "未包含",
+    "未说明",
+)
 NOISE_MARKERS = ("目录", "附录：官方来源目录", "公开资料汇编 |")
 
 
@@ -294,7 +306,8 @@ def generate_answer(
 
 
 def factual_numbers(text: str) -> set[str]:
-    normalized = re.sub(r"\s+", "", text)
+    without_references = re.sub(r"【[^】]*】|\[Source\s+\d+\]", "", text, flags=re.IGNORECASE)
+    normalized = re.sub(r"\s+", "", without_references)
     values = set(re.findall(r"\d+(?:\.\d+)?(?:万|亿|天|年|个|小时|工作日)", normalized))
     values.update(re.findall(r"(?<![\d.])\d{5,}(?![\d.])", normalized))
     return values
@@ -320,6 +333,25 @@ def relevant_excerpt(question: str, content: str, limit: int = 260) -> str:
     start = max(0, position - 60)
     end = min(len(content), start + limit)
     return content[start:end].strip()
+
+
+def answer_is_insufficient(answer: str) -> bool:
+    return any(marker in answer for marker in INSUFFICIENT_MARKERS)
+
+
+def citation_excerpt(question: str, content: str, limit: int = 260) -> str:
+    if len(content) <= limit:
+        return content
+    tokens = lexical_tokens(question)
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[。！？\n])", content)
+        if sentence.strip()
+    ]
+    best = max(sentences, key=lambda sentence: len(tokens & lexical_tokens(sentence)), default=content)
+    position = content.find(best)
+    start = max(0, position - 60)
+    return content[start : min(len(content), start + limit)].strip()
 
 
 def retrieval_node(state: RAGState) -> dict:
@@ -358,6 +390,8 @@ def answer_node(state: RAGState) -> dict:
         if state.get("evidence_sufficient")
         else INSUFFICIENT_ANSWER
     )
+    if answer_is_insufficient(answer):
+        answer = INSUFFICIENT_ANSWER
     timings = {**state.get("timings", {}), "answer": time.perf_counter() - started}
     return {"answer": answer, "timings": timings}
 
@@ -393,7 +427,7 @@ def citations_node(state: RAGState) -> dict:
             chunk_id=chunk.id,
             page_number=chunk.page_number,
             score=round(score, 4),
-            excerpt=relevant_excerpt(state["question"], chunk.content),
+            excerpt=citation_excerpt(state["question"], chunk.content),
         )
         for chunk, document, score in state.get("matches", [])
     ]

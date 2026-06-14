@@ -1,24 +1,21 @@
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import SessionLocal, get_db
+from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models import Document, KnowledgeBase, User
 from app.schemas import DocumentRead
-from app.services.documents import process_document
+from app.services.audit import record_audit
+from app.services.rate_limits import enforce_rate_limit
+from app.services.tasks import enqueue_document_task
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-ALLOWED_SUFFIXES = {".pdf", ".md", ".txt"}
-
-
-def process_in_new_session(document_id: int) -> None:
-    with SessionLocal() as db:
-        process_document(document_id, db)
+ALLOWED_SUFFIXES = {".pdf", ".docx", ".md", ".txt", ".csv", ".html", ".htm"}
 
 
 @router.get("", response_model=list[DocumentRead])
@@ -39,8 +36,8 @@ def list_documents(
 
 @router.post("/upload", response_model=DocumentRead, status_code=202)
 def upload_document(
-    background_tasks: BackgroundTasks,
     knowledge_base_id: int,
+    request: Request,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -54,24 +51,65 @@ def upload_document(
     if not knowledge_base:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     if suffix not in ALLOWED_SUFFIXES:
-        raise HTTPException(status_code=400, detail="Only PDF, Markdown and TXT are supported")
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF, DOCX, Markdown, TXT, CSV and HTML are supported",
+        )
+    document_count = db.scalar(
+        select(func.count(Document.id)).where(Document.knowledge_base_id == knowledge_base_id)
+    )
+    if document_count is not None and document_count >= settings.upload_max_documents_per_kb:
+        raise HTTPException(status_code=409, detail="Knowledge base document limit reached")
+    enforce_rate_limit(
+        db,
+        key=str(user.id),
+        scope="document_upload",
+        limit=settings.upload_rate_limit,
+        window_seconds=settings.upload_rate_window_seconds,
+    )
 
     target_dir = settings.upload_dir / str(user.id) / str(knowledge_base_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / f"{uuid4().hex}{suffix}"
-    with target_path.open("wb") as output:
-        while chunk := file.file.read(1024 * 1024):
-            output.write(chunk)
+    size = 0
+    first_bytes = b""
+    try:
+        with target_path.open("wb") as output:
+            while chunk := file.file.read(1024 * 1024):
+                if not first_bytes:
+                    first_bytes = chunk[:1024]
+                size += len(chunk)
+                if size > settings.upload_max_bytes:
+                    raise HTTPException(status_code=413, detail="Uploaded file is too large")
+                output.write(chunk)
+        if suffix == ".pdf" and not first_bytes.startswith(b"%PDF-"):
+            raise HTTPException(status_code=400, detail="Invalid PDF file")
+        if suffix == ".docx" and not first_bytes.startswith(b"PK"):
+            raise HTTPException(status_code=400, detail="Invalid DOCX file")
+        if suffix in {".md", ".txt", ".csv", ".html", ".htm"} and b"\x00" in first_bytes:
+            raise HTTPException(status_code=400, detail="Invalid text file")
+    except Exception:
+        target_path.unlink(missing_ok=True)
+        raise
 
     document = Document(
         knowledge_base_id=knowledge_base_id,
-        filename=file.filename or target_path.name,
+        filename=Path(file.filename or target_path.name).name,
         file_path=str(target_path),
     )
     db.add(document)
     db.commit()
     db.refresh(document)
-    background_tasks.add_task(process_in_new_session, document.id)
+    enqueue_document_task(db, document)
+    record_audit(
+        db,
+        request,
+        action="document.upload",
+        user_id=user.id,
+        resource_type="document",
+        resource_id=document.id,
+        details={"filename": document.filename, "size_bytes": size},
+    )
     return document
 
 
@@ -89,22 +127,27 @@ def owned_document(db: Session, user_id: int, document_id: int) -> Document:
 @router.post("/{document_id}/reprocess", response_model=DocumentRead, status_code=202)
 def reprocess_document(
     document_id: int,
-    background_tasks: BackgroundTasks,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     document = owned_document(db, user.id, document_id)
-    document.status = "processing"
-    document.error_message = ""
-    db.commit()
-    db.refresh(document)
-    background_tasks.add_task(process_in_new_session, document.id)
+    enqueue_document_task(db, document)
+    record_audit(
+        db,
+        request,
+        action="document.reprocess",
+        user_id=user.id,
+        resource_type="document",
+        resource_id=document.id,
+    )
     return document
 
 
 @router.delete("/{document_id}", status_code=204)
 def delete_document(
     document_id: int,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -113,3 +156,11 @@ def delete_document(
     db.delete(document)
     db.commit()
     path.unlink(missing_ok=True)
+    record_audit(
+        db,
+        request,
+        action="document.delete",
+        user_id=user.id,
+        resource_type="document",
+        resource_id=document_id,
+    )

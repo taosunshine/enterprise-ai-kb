@@ -29,7 +29,7 @@ def test_minimum_knowledge_base_flow():
             files={"file": ("product.txt", "核心卖点是部署简单，回答带有引用。", "text/plain")},
         )
         assert uploaded.status_code == 202
-        assert uploaded.json()["status"] == "processing"
+        assert uploaded.json()["status"] == "ready"
 
         answered = client.post(
             "/api/chat/ask",
@@ -38,4 +38,3 @@ def test_minimum_knowledge_base_flow():
         )
         assert answered.status_code == 200
         assert answered.json()["citations"]
-

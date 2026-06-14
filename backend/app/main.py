@@ -4,14 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.database import initialize_database
-from app.routers import auth, chat, documents, knowledge_bases
+from app.core.migrations import upgrade_database
+from app.routers import audit, auth, chat, documents, knowledge_bases
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
-    initialize_database()
+    upgrade_database()
     yield
 
 
@@ -27,6 +27,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(knowledge_bases.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
+app.include_router(audit.router, prefix="/api")
 
 
 @app.get("/health")

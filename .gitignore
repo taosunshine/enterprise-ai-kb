@@ -14,3 +14,7 @@ dist/
 *.pid
 data/
 backend/data/
+backups/
+secrets/*
+!secrets/README.md
+backend/evaluation/reports/*

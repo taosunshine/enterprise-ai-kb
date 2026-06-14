@@ -43,6 +43,7 @@ class Document(Base):
     error_message: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     chunks: Mapped[list["DocumentChunk"]] = relationship(cascade="all, delete-orphan")
+    tasks: Mapped[list["ProcessingTask"]] = relationship(cascade="all, delete-orphan")
 
 
 class DocumentChunk(Base):
@@ -93,3 +94,44 @@ class ChatMessage(Base):
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ProcessingTask(Base):
+    __tablename__ = "processing_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    task_type: Mapped[str] = mapped_column(String(50), default="process_document")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    max_attempts: Mapped[int] = mapped_column(default=3)
+    available_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    locked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class RateLimitEvent(Base):
+    __tablename__ = "rate_limit_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(255), index=True)
+    scope: Mapped[str] = mapped_column(String(50), index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    resource_type: Mapped[str] = mapped_column(String(50), default="")
+    resource_id: Mapped[str] = mapped_column(String(100), default="")
+    status: Mapped[str] = mapped_column(String(20), default="success", index=True)
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)

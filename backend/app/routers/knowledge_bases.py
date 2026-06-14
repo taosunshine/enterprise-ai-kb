@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models import KnowledgeBase, User
 from app.schemas import KnowledgeBaseCreate, KnowledgeBaseRead, KnowledgeBaseUpdate
+from app.services.audit import record_audit
 
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 
@@ -20,6 +21,7 @@ def list_knowledge_bases(user: User = Depends(get_current_user), db: Session = D
 @router.post("", response_model=KnowledgeBaseRead, status_code=201)
 def create_knowledge_base(
     payload: KnowledgeBaseCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -27,6 +29,10 @@ def create_knowledge_base(
     db.add(item)
     db.commit()
     db.refresh(item)
+    record_audit(
+        db, request, action="knowledge_base.create", user_id=user.id,
+        resource_type="knowledge_base", resource_id=item.id
+    )
     return item
 
 
@@ -34,6 +40,7 @@ def create_knowledge_base(
 def update_knowledge_base(
     knowledge_base_id: int,
     payload: KnowledgeBaseUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -48,12 +55,17 @@ def update_knowledge_base(
     item.description = payload.description
     db.commit()
     db.refresh(item)
+    record_audit(
+        db, request, action="knowledge_base.update", user_id=user.id,
+        resource_type="knowledge_base", resource_id=item.id
+    )
     return item
 
 
 @router.delete("/{knowledge_base_id}", status_code=204)
 def delete_knowledge_base(
     knowledge_base_id: int,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -69,3 +81,7 @@ def delete_knowledge_base(
     db.commit()
     for path in document_paths:
         path.unlink(missing_ok=True)
+    record_audit(
+        db, request, action="knowledge_base.delete", user_id=user.id,
+        resource_type="knowledge_base", resource_id=knowledge_base_id
+    )

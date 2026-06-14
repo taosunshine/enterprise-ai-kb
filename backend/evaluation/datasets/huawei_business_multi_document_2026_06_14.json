@@ -1,0 +1,195 @@
+{
+  "name": "华为真实业务多文档问答集",
+  "version": "2026-06-14.1",
+  "description": "覆盖订单、支付、物流、退换货、手机和平板产品资料，并包含同义问法、跨文档干扰和不可回答问题。",
+  "thresholds": {
+    "retrieval_hit_rate": 0.9,
+    "citation_accuracy": 0.8,
+    "faithfulness": 0.8,
+    "maximum_average_latency_seconds": 15
+  },
+  "cases": [
+    {
+      "id": "order-change-after-submit",
+      "category": "订单管理",
+      "question": "订单已经提交了，还能改收货地址并追加一个商品吗？",
+      "expected_answer_keywords": ["不可以", "联系华为客服"],
+      "expected_evidence_keywords": ["订单提交后不可修改信息或添加商品", "不能编辑收件人信息或地址"],
+      "expected_documents": ["华为FAQ_订单与购买问题.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "order-number-status",
+      "category": "订单管理",
+      "question": "下单后去哪里找订单号和跟踪状态？",
+      "expected_answer_keywords": ["订单号", "我的订单"],
+      "expected_evidence_keywords": ["登录“我的订单”即可查看", "查看和跟踪订单状态"],
+      "expected_documents": ["华为FAQ_订单与购买问题.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "payment-methods",
+      "category": "支付",
+      "question": "香港网店能用哪些银行卡和电子钱包付款？",
+      "expected_answer_keywords": ["Visa", "MasterCard", "UnionPay", "Alipay", "微信支付"],
+      "expected_evidence_keywords": ["Visa", "MasterCard", "UnionPay", "Alipay", "微信支付"],
+      "expected_documents": ["华为FAQ_订单与购买问题.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "installment-payment",
+      "category": "支付",
+      "question": "华为香港网店支持分期付款吗？",
+      "expected_answer_keywords": ["不支持分期付款"],
+      "expected_evidence_keywords": ["暂不支持分期付款"],
+      "expected_documents": ["华为FAQ_订单与购买问题.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "invoice-split",
+      "category": "发票",
+      "question": "一个订单可以拆成两张发票吗？",
+      "expected_answer_keywords": ["不能拆分", "分开下单"],
+      "expected_evidence_keywords": ["一个订单只能生成一张发票", "不支持拆分发票", "不能拆分"],
+      "expected_documents": ["华为FAQ_订单与购买问题.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "delivery-duration",
+      "category": "物流",
+      "question": "工作日下午两点前付款，一般多久送到？",
+      "expected_answer_keywords": ["2", "4个工作日", "偏远地区"],
+      "expected_evidence_keywords": ["14:00前付款", "2–4个工作日送达"],
+      "expected_documents": ["华为FAQ_订单与购买问题.docx", "华为FAQ_物流与配送问题.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "damaged-delivery",
+      "category": "物流",
+      "question": "签收时发现货物运输损坏，应该怎么处理？",
+      "expected_answer_keywords": ["拒收", "联系客服", "留证"],
+      "expected_evidence_keywords": ["当场拒收", "联系客服并保留证据"],
+      "expected_documents": ["华为FAQ_订单与购买问题.docx", "华为售后规则_退换货政策.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "return-exclusions",
+      "category": "退换货",
+      "question": "所有网购商品都支持七天无理由退货吗？",
+      "expected_answer_keywords": ["不是", "定制商品", "鲜活易腐商品", "已拆封的数字产品"],
+      "expected_evidence_keywords": ["不适用无理由退货", "定制商品", "鲜活易腐商品"],
+      "expected_documents": ["华为售后规则_退换货政策.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "return-condition",
+      "category": "退换货",
+      "question": "退货商品需要保持什么状态，运费通常由谁承担？",
+      "expected_answer_keywords": ["保持完好", "包装", "赠品", "消费者承担"],
+      "expected_evidence_keywords": ["不得影响二次销售", "运费一般由消费者承担"],
+      "expected_documents": ["华为售后规则_退换货政策.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "exchange-window",
+      "category": "退换货",
+      "question": "香港网店质量问题换货期限是多久？",
+      "expected_answer_keywords": ["7天", "签收次日"],
+      "expected_evidence_keywords": ["签收次日起7天"],
+      "expected_documents": ["华为售后规则_退换货政策.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "exchange-freight",
+      "category": "退换货",
+      "question": "质量问题换货和人为损坏换货的运费分别由谁承担？",
+      "expected_answer_keywords": ["华为承担", "客户承担"],
+      "expected_evidence_keywords": ["质量问题属实", "运费由华为承担", "人损", "客户承担"],
+      "expected_documents": ["华为售后规则_退换货政策.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "phone-series",
+      "category": "产品咨询",
+      "question": "华为手机主要产品系列有哪些？",
+      "expected_answer_keywords": ["Mate", "Pura", "Pocket", "Nova", "麦芒", "畅享"],
+      "expected_evidence_keywords": ["Mate系列", "Pura系列", "Pocket系列", "Nova系列", "麦芒系列", "畅享系列"],
+      "expected_documents": ["华为产品资料_手机产品介绍.docx", "华为品牌资料_消费者业务介绍.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "mate-vs-pura",
+      "category": "产品咨询",
+      "question": "偏商务性能和偏影像时尚，分别应该关注哪个手机系列？",
+      "expected_answer_keywords": ["Mate", "Pura", "商务", "影像"],
+      "expected_evidence_keywords": ["Mate系列强调大屏、高性能和商务体验", "Pura系列强调影像能力和时尚设计"],
+      "expected_documents": ["华为产品资料_手机产品介绍.docx", "华为品牌资料_消费者业务介绍.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "nova-audience",
+      "category": "产品咨询",
+      "question": "年轻人重视自拍体验，资料建议关注哪个系列？",
+      "expected_answer_keywords": ["Nova", "自拍"],
+      "expected_evidence_keywords": ["Nova系列", "注重自拍体验"],
+      "expected_documents": ["华为产品资料_手机产品介绍.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "tablet-series",
+      "category": "产品咨询",
+      "question": "MatePad 平板分为哪些系列？",
+      "expected_answer_keywords": ["Pro", "Air", "数字系列", "SE"],
+      "expected_evidence_keywords": ["Pro系列", "Air系列", "数字系列", "SE系列"],
+      "expected_documents": ["华为产品资料_平板产品介绍.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "tablet-professional",
+      "category": "产品咨询",
+      "question": "专业创作和高效办公更适合哪一个 MatePad 系列，它有什么优势？",
+      "expected_answer_keywords": ["MatePad Pro", "高刷新率", "USB 3.1 Gen1", "DP 1.2"],
+      "expected_evidence_keywords": ["MatePad Pro系列", "高刷新率大屏", "USB 3.1 Gen1", "DP 1.2视频输出"],
+      "expected_documents": ["华为产品资料_平板产品介绍.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "tablet-entry-vs-phone-entry",
+      "category": "跨文档问题",
+      "question": "平板和手机中，面向入门用户且价格亲民的系列分别是什么？",
+      "expected_answer_keywords": ["MatePad SE", "畅享系列"],
+      "expected_evidence_keywords": ["SE系列定位入门级", "畅享系列定位入门级"],
+      "expected_documents": ["华为产品资料_平板产品介绍.docx", "华为产品资料_手机产品介绍.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "distractor-seven-days",
+      "category": "干扰问题",
+      "question": "七天无理由退货与香港网店质量问题换货的条件有什么不同？",
+      "expected_answer_keywords": ["无理由退货", "质量问题", "7天"],
+      "expected_evidence_keywords": ["不适用无理由退货", "因质量问题的换货有效期", "签收次日起7天", "换货有效期多长"],
+      "expected_documents": ["华为售后规则_退换货政策.docx"],
+      "expected_pages": []
+    },
+    {
+      "id": "unanswerable-us-shipping",
+      "category": "不可回答",
+      "question": "华为香港网店是否可以配送到美国纽约？",
+      "expected_answer_keywords": [],
+      "expected_evidence_keywords": [],
+      "expected_documents": [],
+      "expected_pages": [],
+      "expected_behavior": "insufficient"
+    },
+    {
+      "id": "unanswerable-current-price",
+      "category": "不可回答",
+      "question": "Mate 系列最新旗舰手机今天的准确售价是多少？",
+      "expected_answer_keywords": [],
+      "expected_evidence_keywords": [],
+      "expected_documents": [],
+      "expected_pages": [],
+      "expected_behavior": "insufficient"
+    }
+  ]
+}

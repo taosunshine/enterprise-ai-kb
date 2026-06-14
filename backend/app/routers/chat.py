@@ -1,7 +1,7 @@
 import json
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,6 +12,8 @@ from app.dependencies import get_current_user
 from app.models import ChatMessage, ChatSession, KnowledgeBase, User
 from app.schemas import ChatRequest, ChatResponse, ChatSessionDetail, ChatSessionRead
 from app.services.rag import answer_question
+from app.services.audit import record_audit
+from app.services.rate_limits import enforce_rate_limit
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -128,7 +130,16 @@ def prepare_chat(
 
 
 @router.post("/ask", response_model=ChatResponse)
-def ask(payload: ChatRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def ask(
+    payload: ChatRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    enforce_rate_limit(
+        db, key=str(user.id), scope="chat_ask",
+        limit=settings.chat_rate_limit, window_seconds=settings.chat_rate_window_seconds
+    )
     knowledge_base, session, history = prepare_chat(payload, user, db)
 
     db.add(ChatMessage(session_id=session.id, role="user", content=payload.question))
@@ -141,15 +152,25 @@ def ask(payload: ChatRequest, user: User = Depends(get_current_user), db: Sessio
     )
     db.add(ChatMessage(session_id=session.id, role="assistant", content=answer))
     db.commit()
+    record_audit(
+        db, request, action="chat.ask", user_id=user.id,
+        resource_type="chat_session", resource_id=session.id,
+        details={"knowledge_base_id": knowledge_base.id, "citation_count": len(citations)}
+    )
     return ChatResponse(session_id=session.id, answer=answer, citations=citations)
 
 
 @router.post("/ask/stream")
 def ask_stream(
     payload: ChatRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    enforce_rate_limit(
+        db, key=str(user.id), scope="chat_stream",
+        limit=settings.chat_rate_limit, window_seconds=settings.chat_rate_window_seconds
+    )
     knowledge_base, session, history = prepare_chat(payload, user, db)
 
     def event_stream() -> Iterator[str]:
@@ -168,6 +189,11 @@ def ask_stream(
                 yield sse_event("token", {"content": character})
             db.add(ChatMessage(session_id=session.id, role="assistant", content=answer))
             db.commit()
+            record_audit(
+                db, request, action="chat.ask_stream", user_id=user.id,
+                resource_type="chat_session", resource_id=session.id,
+                details={"knowledge_base_id": knowledge_base.id, "citation_count": len(citations)}
+            )
             yield sse_event(
                 "citations",
                 {"items": [citation.model_dump() for citation in citations]},

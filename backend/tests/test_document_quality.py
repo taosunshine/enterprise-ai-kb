@@ -1,4 +1,14 @@
-from app.services.documents import clean_page_text, is_short_noise, repeated_margin_lines, structured_split
+from pathlib import Path
+
+from docx import Document
+
+from app.services.documents import (
+    clean_page_text,
+    extract_pages,
+    is_short_noise,
+    repeated_margin_lines,
+    structured_split,
+)
 
 
 def test_repeated_headers_footers_and_page_numbers_are_removed():
@@ -40,3 +50,26 @@ def test_structured_split_preserves_section_metadata_and_overlap():
     assert chunks[0].section_title == "1. 公司信息"
     assert chunks[-1].section_title == "2. 服务政策"
     assert chunks[0].char_end > chunks[0].char_start
+
+
+def test_extract_docx_preserves_heading_and_body(tmp_path: Path):
+    path = tmp_path / "business.docx"
+    document = Document()
+    document.add_heading("订单管理", level=1)
+    document.add_paragraph("订单提交后不能修改地址。")
+    document.save(path)
+
+    pages = extract_pages(path)
+
+    assert pages == [(None, "# 订单管理\n订单提交后不能修改地址。")]
+
+
+def test_extract_csv_and_html(tmp_path: Path):
+    csv_path = tmp_path / "products.csv"
+    html_path = tmp_path / "faq.html"
+    csv_path.write_text("系列,定位\nMate,商务", encoding="utf-8")
+    html_path.write_text("<h1>支付方式</h1><p>支持银行卡。</p>", encoding="utf-8")
+
+    assert "Mate | 商务" in extract_pages(csv_path)[0][1]
+    assert "支付方式" in extract_pages(html_path)[0][1]
+    assert "支持银行卡" in extract_pages(html_path)[0][1]

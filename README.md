@@ -42,6 +42,7 @@
 - 按标题、段落和列表进行结构化切片
 - 保存页码、章节标题、字符范围等切片元数据
 - 新文档上传后自动完成清洗、切片和向量化
+- 数据库持久化任务队列、独立 worker、失败自动重试和中断任务恢复
 
 ### RAG 问答
 
@@ -97,6 +98,7 @@ flowchart LR
 - Embedding：FastEmbed、`BAAI/bge-small-zh-v1.5`
 - 模型接口：OpenAI 兼容 Chat Completions API
 - 部署：Docker Compose
+- 数据库迁移：Alembic
 
 ### LangGraph 问答流程
 
@@ -140,6 +142,9 @@ docker compose up --build -d
 docker compose ps
 ```
 
+后端镜像默认使用清华 PyPI 镜像。需要切换时可传入构建参数
+`PIP_INDEX_URL`。
+
 ### 3. 访问系统
 
 - 前端工作台：<http://localhost:5173>
@@ -179,6 +184,14 @@ Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
 
+另开一个终端启动文档任务 worker：
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+python -m app.worker
+```
+
 ### 前端
 
 ```powershell
@@ -207,8 +220,19 @@ Vite 开发服务器会将 `/api` 和 `/health` 请求代理到后端。
 | `CHUNK_OVERLAP` | `100` | 相邻切片上下文重叠长度 |
 | `CHAT_HISTORY_MESSAGES` | `8` | 加入 RAG 提示词的最近消息数量 |
 | `RERANK_PROVIDER` | `llm` | Rerank 方式；也可配置外部 Rerank API |
+| `TASK_MAX_ATTEMPTS` | `3` | 文档解析任务最大执行次数 |
+| `TASK_RETRY_BASE_SECONDS` | `15` | 失败重试的指数退避基础秒数 |
+| `TASK_STALE_AFTER_SECONDS` | `900` | 运行任务超过该时间后由 worker 自动回收 |
 
 修改 Embedding 模型、向量维度或切片策略后，应重新解析已有文档。
+
+数据库结构由 Alembic 管理。应用和 worker 启动时会自动执行升级，也可以手动运行：
+
+```powershell
+cd backend
+.\.venv\Scripts\alembic.exe current
+.\.venv\Scripts\alembic.exe upgrade head
+```
 
 ## API 概览
 
@@ -237,7 +261,7 @@ cd ..\frontend
 npm run build
 ```
 
-当前完整后端测试结果为 **18 passed**。
+当前完整后端测试结果为 **20 passed**。
 
 ### 企业问答集评估
 
@@ -276,7 +300,8 @@ enterprise-ai-kb/
 │  │  ├─ schemas.py
 │  │  └─ main.py
 │  ├─ evaluation/              # 企业问答集、评估脚本与报告
-│  ├─ initdb/                  # PostgreSQL 初始化
+│  ├─ alembic/                 # 数据库版本迁移
+│  ├─ initdb/                  # PostgreSQL 扩展初始化
 │  └─ tests/
 ├─ frontend/
 │  └─ src/                     # React 工作台
@@ -290,8 +315,7 @@ enterprise-ai-kb/
 
 - 当前是单用户知识库模型，没有组织、部门、角色与共享权限。
 - PDF 仅处理可提取文本，尚未实现扫描件 OCR、表格结构恢复和图片理解。
-- 文档解析使用 FastAPI 后台任务，服务重启后不会自动恢复中断任务。
-- 数据库结构通过启动时增量检查维护，尚未引入 Alembic 正式迁移体系。
+- 文档解析已使用数据库持久任务队列，但当前 worker 仍以单任务串行方式执行。
 - 尚未实现限流、审计后台、内容审核、密钥托管、备份恢复和完整生产监控。
 - 评估集当前基于一份企业测试文档，扩大文档类型和业务场景后仍需持续回归。
 - 模型生成内容仍可能存在误差，重要结论必须结合引用资料人工核验。
@@ -300,8 +324,7 @@ enterprise-ai-kb/
 
 建议下一阶段优先完成企业试点所需的工程化能力：
 
-1. 引入 Alembic、任务队列和失败任务自动恢复。
-2. 增加上传限制、速率限制、审计日志、密钥管理和数据库备份。
-3. 扩展多文档、多格式和真实业务问答集，持续运行质量门禁。
-4. 增加 OCR、表格解析和图片理解能力。
-5. 根据试点反馈，再选择团队协作权限或高级 Agent 创作作为主线。
+1. 增加上传限制、速率限制、审计日志、密钥管理和数据库备份。
+2. 扩展多文档、多格式和真实业务问答集，持续运行质量门禁。
+3. 增加 OCR、表格解析和图片理解能力。
+4. 根据试点反馈，再选择团队协作权限或高级 Agent 创作作为主线。
