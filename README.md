@@ -1,7 +1,7 @@
 # 知境：企业 AI 创作知识库
+<img width="1912" height="1092" alt="image" src="https://github.com/user-attachments/assets/772a2c31-2920-4fd6-870d-fb64e7b05f35" />
 
 面向企业资料问答与内容创作的 RAG 知识库系统。它将多格式文档解析、语义检索、Rerank、可信引用、流式问答和创作模板整合到一个可通过 Docker Compose 部署的工作台中。
-
 当前定位是**企业试点版**：核心业务闭环、安全基础设施和持续质量门禁已经建立，适合接入真实资料持续评估；团队权限、OCR 和完整生产监控仍待建设。
 
 ## 核心能力
