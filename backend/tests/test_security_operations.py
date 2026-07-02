@@ -57,9 +57,15 @@ def test_upload_size_and_pdf_signature_are_rejected(monkeypatch):
             headers=headers,
             files={"file": ("fake.docx", b"not a docx", "application/octet-stream")},
         )
+        invalid_image = client.post(
+            f"/api/documents/upload?knowledge_base_id={knowledge_base_id}",
+            headers=headers,
+            files={"file": ("fake.png", b"not an image", "image/png")},
+        )
     assert too_large.status_code == 413
     assert invalid_pdf.status_code == 400
     assert invalid_docx.status_code == 400
+    assert invalid_image.status_code == 400
 
 
 def test_audit_log_contains_metadata_without_secrets():
@@ -94,3 +100,19 @@ def test_settings_load_secrets_from_files(tmp_path: Path):
     assert loaded.secret_key == "jwt-from-file"
     assert loaded.llm_api_key == "llm-from-file"
     assert loaded.database_url == "sqlite:///from-file.db"
+
+
+def test_knowledge_base_delete_requires_exact_name():
+    with TestClient(app) as client:
+        headers, knowledge_base_id = register_and_create_kb(client)
+        rejected = client.delete(
+            f"/api/knowledge-bases/{knowledge_base_id}?confirmation=wrong",
+            headers=headers,
+        )
+        deleted = client.delete(
+            f"/api/knowledge-bases/{knowledge_base_id}?confirmation=Security%20test",
+            headers=headers,
+        )
+
+    assert rejected.status_code == 409
+    assert deleted.status_code == 204

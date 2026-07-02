@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -20,7 +20,15 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-class KnowledgeBase(Base):
+class SoftDeleteFields:
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class KnowledgeBase(SoftDeleteFields, Base):
     __tablename__ = "knowledge_bases"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -32,7 +40,7 @@ class KnowledgeBase(Base):
     sessions: Mapped[list["ChatSession"]] = relationship(cascade="all, delete-orphan")
 
 
-class Document(Base):
+class Document(SoftDeleteFields, Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -46,7 +54,7 @@ class Document(Base):
     tasks: Mapped[list["ProcessingTask"]] = relationship(cascade="all, delete-orphan")
 
 
-class DocumentChunk(Base):
+class DocumentChunk(SoftDeleteFields, Base):
     __tablename__ = "document_chunks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -63,7 +71,7 @@ class DocumentChunk(Base):
     )
 
 
-class ChunkEmbedding(Base):
+class ChunkEmbedding(SoftDeleteFields, Base):
     __tablename__ = "chunk_embeddings"
 
     id: Mapped[int] = mapped_column(primary_key=True)

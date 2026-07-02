@@ -26,7 +26,19 @@ INSUFFICIENT_MARKERS = (
     "未说明",
 )
 METRIC_VERSION = "2.1"
-SUPPORTED_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".md", ".txt", ".csv", ".html", ".htm"}
+SUPPORTED_DOCUMENT_SUFFIXES = {
+    ".pdf",
+    ".docx",
+    ".md",
+    ".txt",
+    ".csv",
+    ".html",
+    ".htm",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+}
 CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -35,6 +47,10 @@ CONTENT_TYPES = {
     ".csv": "text/csv",
     ".html": "text/html",
     ".htm": "text/html",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
 }
 STOP_TOKENS = {
     "什么",

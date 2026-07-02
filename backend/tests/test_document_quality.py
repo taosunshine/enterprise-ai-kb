@@ -1,12 +1,17 @@
 from pathlib import Path
 
+import fitz
 from docx import Document
 
+from app.core.config import settings
 from app.services.documents import (
     clean_page_text,
+    extract_blocks,
     extract_pages,
     is_short_noise,
+    markdown_table,
     repeated_margin_lines,
+    response_text,
     structured_split,
 )
 
@@ -73,3 +78,64 @@ def test_extract_csv_and_html(tmp_path: Path):
     assert "Mate | 商务" in extract_pages(csv_path)[0][1]
     assert "支付方式" in extract_pages(html_path)[0][1]
     assert "支持银行卡" in extract_pages(html_path)[0][1]
+
+
+def test_markdown_table_preserves_complex_cells():
+    content = markdown_table([["产品", "规格"], ["Mate", "内存 12 GB\n存储 512 GB"]])
+
+    assert "| 产品 | 规格 |" in content
+    assert "| Mate | 内存 12 GB 存储 512 GB |" in content
+    assert "| --- | --- |" in content
+
+
+def test_extract_docx_tables_as_separate_blocks(tmp_path: Path):
+    path = tmp_path / "products.docx"
+    document = Document()
+    document.add_paragraph("产品参数")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "型号"
+    table.cell(0, 1).text = "容量"
+    table.cell(1, 0).text = "Mate"
+    table.cell(1, 1).text = "512 GB"
+    document.save(path)
+
+    blocks = extract_blocks(path)
+
+    assert any(block.content_type == "body" and "产品参数" in block.content for block in blocks)
+    assert any(block.content_type == "table" and "512 GB" in block.content for block in blocks)
+
+
+def test_scanned_pdf_uses_vision_ocr(tmp_path: Path, monkeypatch):
+    path = tmp_path / "scan.pdf"
+    pdf = fitz.open()
+    pdf.new_page()
+    pdf.save(path)
+    monkeypatch.setattr(settings, "ocr_min_page_characters", 80)
+    monkeypatch.setattr(
+        "app.services.documents.analyze_image",
+        lambda *_args: "扫描识别结果\n| 项目 | 数值 |\n| --- | --- |\n| 收入 | 100 万 |",
+    )
+
+    blocks = extract_blocks(path)
+
+    assert any(block.content_type == "ocr" and "扫描识别结果" in block.content for block in blocks)
+
+
+def test_standalone_image_uses_vision_analysis(tmp_path: Path, monkeypatch):
+    path = tmp_path / "chart.png"
+    path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    monkeypatch.setattr(
+        "app.services.documents.analyze_image",
+        lambda *_args: "图表显示企业业务收入增长 20%。",
+    )
+
+    blocks = extract_blocks(path)
+
+    assert blocks[0].content_type == "image"
+    assert "增长 20%" in blocks[0].content
+
+
+def test_vision_response_text_supports_multimodal_content_blocks():
+    content = [{"type": "text", "text": "第一段"}, {"type": "text", "text": "第二段"}]
+
+    assert response_text(content) == "第一段\n第二段"

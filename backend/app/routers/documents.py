@@ -12,10 +12,23 @@ from app.models import Document, KnowledgeBase, User
 from app.schemas import DocumentRead
 from app.services.audit import record_audit
 from app.services.rate_limits import enforce_rate_limit
+from app.services.recycle_bin import soft_delete_document
 from app.services.tasks import enqueue_document_task
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-ALLOWED_SUFFIXES = {".pdf", ".docx", ".md", ".txt", ".csv", ".html", ".htm"}
+ALLOWED_SUFFIXES = {
+    ".pdf",
+    ".docx",
+    ".md",
+    ".txt",
+    ".csv",
+    ".html",
+    ".htm",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+}
 
 
 @router.get("", response_model=list[DocumentRead])
@@ -53,7 +66,7 @@ def upload_document(
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF, DOCX, Markdown, TXT, CSV and HTML are supported",
+            detail="Only PDF, DOCX, Markdown, TXT, CSV, HTML and images are supported",
         )
     document_count = db.scalar(
         select(func.count(Document.id)).where(Document.knowledge_base_id == knowledge_base_id)
@@ -86,6 +99,14 @@ def upload_document(
             raise HTTPException(status_code=400, detail="Invalid PDF file")
         if suffix == ".docx" and not first_bytes.startswith(b"PK"):
             raise HTTPException(status_code=400, detail="Invalid DOCX file")
+        image_headers = {
+            ".png": b"\x89PNG\r\n\x1a\n",
+            ".jpg": b"\xff\xd8\xff",
+            ".jpeg": b"\xff\xd8\xff",
+            ".webp": b"RIFF",
+        }
+        if suffix in image_headers and not first_bytes.startswith(image_headers[suffix]):
+            raise HTTPException(status_code=400, detail="Invalid image file")
         if suffix in {".md", ".txt", ".csv", ".html", ".htm"} and b"\x00" in first_bytes:
             raise HTTPException(status_code=400, detail="Invalid text file")
     except Exception:
@@ -152,10 +173,8 @@ def delete_document(
     db: Session = Depends(get_db),
 ):
     document = owned_document(db, user.id, document_id)
-    path = Path(document.file_path)
-    db.delete(document)
+    soft_delete_document(db, document, user.id)
     db.commit()
-    path.unlink(missing_ok=True)
     record_audit(
         db,
         request,

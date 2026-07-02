@@ -1,4 +1,8 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -29,6 +33,7 @@ services:
       DATABASE_URL_FILE: /run/secrets/database_url
       SECRET_KEY_FILE: /run/secrets/secret_key
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      VISION_API_KEY_FILE: /run/secrets/vision_api_key
       RERANK_API_KEY_FILE: /run/secrets/rerank_api_key
     ports:
       - "8000:8000"
@@ -50,6 +55,7 @@ services:
       DATABASE_URL_FILE: /run/secrets/database_url
       SECRET_KEY_FILE: /run/secrets/secret_key
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      VISION_API_KEY_FILE: /run/secrets/vision_api_key
       RERANK_API_KEY_FILE: /run/secrets/rerank_api_key
     restart: unless-stopped
     healthcheck:
@@ -66,6 +72,41 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  celery-worker:
+    build: ./backend
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/data:/app/data
+      - ./secrets:/run/secrets:ro
+    environment:
+      DATABASE_URL: postgresql+psycopg://knowledge:knowledge-local-password@postgres:5432/knowledge_base
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  celery-beat:
+    build: ./backend
+    command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=INFO"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://knowledge:knowledge-local-password@postgres:5432/knowledge_base
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
 
   frontend:
     build: ./frontend

@@ -34,3 +34,26 @@ def record_audit(
         )
     )
     db.commit()
+
+
+def add_system_audit(
+    db: Session,
+    *,
+    action: str,
+    user_id: int | None = None,
+    resource_type: str = "",
+    resource_id: int | str | None = None,
+    status: str = "success",
+    details: dict[str, str | int | bool] | None = None,
+) -> None:
+    db.add(
+        AuditLog(
+            user_id=user_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=str(resource_id or ""),
+            status=status,
+            ip_address="system",
+            details_json=json.dumps(details or {}, ensure_ascii=False),
+        )
+    )

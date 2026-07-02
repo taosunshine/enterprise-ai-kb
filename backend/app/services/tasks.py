@@ -18,6 +18,8 @@ def now() -> datetime:
 
 
 def enqueue_document_task(db: Session, document: Document) -> ProcessingTask:
+    if document.deleted_at is not None:
+        raise ValueError("Cannot process a deleted document")
     active = db.scalar(
         select(ProcessingTask).where(
             ProcessingTask.document_id == document.id,
@@ -63,9 +65,14 @@ def recover_stale_tasks(db: Session) -> int:
 
 
 def claim_query():
-    return select(ProcessingTask).where(
-        ProcessingTask.status.in_(("pending", "retry")),
-        ProcessingTask.available_at <= now(),
+    return (
+        select(ProcessingTask)
+        .join(Document, Document.id == ProcessingTask.document_id)
+        .where(
+            ProcessingTask.status.in_(("pending", "retry")),
+            ProcessingTask.available_at <= now(),
+            Document.deleted_at.is_(None),
+        )
     )
 
 

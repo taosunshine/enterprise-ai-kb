@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.migrations import upgrade_database
-from app.routers import audit, auth, chat, documents, knowledge_bases
+from app.routers import audit, auth, chat, documents, knowledge_bases, recycle_bin
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app.include_router(knowledge_bases.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
+app.include_router(recycle_bin.router, prefix="/api")
 
 
 @app.get("/health")

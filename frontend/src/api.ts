@@ -4,11 +4,31 @@ export type Citation = { document_id: number; filename: string; chunk_id: number
 export type ChatMessage = { id: number; role: "user" | "assistant"; content: string; created_at: string };
 export type ChatSession = { id: number; knowledge_base_id: number; title: string; created_at: string; message_count: number; last_message_at?: string };
 export type ChatSessionDetail = ChatSession & { messages: ChatMessage[] };
+export type RecycleBinItem = { item_type: "knowledge-base" | "document"; item_id: number; name: string; deleted_at: string; purge_after: string; remaining_days: number };
 export type ChatStreamHandlers = {
   onStatus?: (message: string) => void;
   onToken: (content: string) => void;
   onCitations: (citations: Citation[]) => void;
   onDone: (sessionId: number) => void;
+};
+
+export const AUTH_EXPIRED_EVENT = "knowledge-auth-expired";
+
+const handleUnauthorized = (response: Response, hadToken: boolean) => {
+  if (response.status !== 401 || !hadToken) return;
+  localStorage.removeItem("token");
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+};
+
+const errorMessage = (detail: unknown, status: number): string => {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => typeof item?.msg === "string" ? item.msg : JSON.stringify(item))
+      .join("；");
+  }
+  if (detail && typeof detail === "object" && "msg" in detail) return String(detail.msg);
+  return `请求失败（${status}）`;
 };
 
 const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -17,6 +37,7 @@ const request = async <T>(path: string, options: RequestInit = {}): Promise<T> =
   if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(path, { ...options, headers });
+  handleUnauthorized(response, Boolean(token));
   if (response.status === 204) return undefined as T;
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json")
@@ -24,7 +45,7 @@ const request = async <T>(path: string, options: RequestInit = {}): Promise<T> =
     : await response.text();
   if (!response.ok) {
     const detail = typeof payload === "object" && payload ? payload.detail : payload;
-    throw new Error(detail || `请求失败（${response.status}）`);
+    throw new Error(errorMessage(detail, response.status));
   }
   return payload as T;
 };
@@ -39,6 +60,7 @@ const askStream = async (knowledgeBaseId: number, question: string, sessionId: n
     },
     body: JSON.stringify({ knowledge_base_id: knowledgeBaseId, question, session_id: sessionId })
   });
+  handleUnauthorized(response, Boolean(token));
   if (!response.ok || !response.body) {
     const payload = await response.text();
     throw new Error(payload || `Stream request failed (${response.status})`);
@@ -75,7 +97,7 @@ export const api = {
   listKnowledgeBases: () => request<KnowledgeBase[]>("/api/knowledge-bases"),
   createKnowledgeBase: (name: string, description: string) => request<KnowledgeBase>("/api/knowledge-bases", { method: "POST", body: JSON.stringify({ name, description }) }),
   updateKnowledgeBase: (id: number, name: string, description: string) => request<KnowledgeBase>(`/api/knowledge-bases/${id}`, { method: "PUT", body: JSON.stringify({ name, description }) }),
-  deleteKnowledgeBase: (id: number) => request<void>(`/api/knowledge-bases/${id}`, { method: "DELETE" }),
+  deleteKnowledgeBase: (id: number, confirmation: string) => request<void>(`/api/knowledge-bases/${id}?confirmation=${encodeURIComponent(confirmation)}`, { method: "DELETE" }),
   listDocuments: (knowledgeBaseId: number) => request<DocumentItem[]>(`/api/documents?knowledge_base_id=${knowledgeBaseId}`),
   uploadDocument: (knowledgeBaseId: number, file: File) => {
     const body = new FormData();
@@ -84,6 +106,9 @@ export const api = {
   },
   reprocessDocument: (id: number) => request<DocumentItem>(`/api/documents/${id}/reprocess`, { method: "POST" }),
   deleteDocument: (id: number) => request<void>(`/api/documents/${id}`, { method: "DELETE" }),
+  listTrash: () => request<RecycleBinItem[]>("/api/trash"),
+  restoreTrashItem: (type: RecycleBinItem["item_type"], id: number) => request<void>(`/api/trash/${type}/${id}/restore`, { method: "POST" }),
+  purgeTrashItem: (type: RecycleBinItem["item_type"], id: number, confirmation: string) => request<void>(`/api/trash/${type}/${id}?confirmation=${encodeURIComponent(confirmation)}`, { method: "DELETE" }),
   listChatSessions: (knowledgeBaseId?: number) => request<ChatSession[]>(`/api/chat/sessions${knowledgeBaseId ? `?knowledge_base_id=${knowledgeBaseId}` : ""}`),
   getChatSession: (id: number) => request<ChatSessionDetail>(`/api/chat/sessions/${id}`),
   deleteChatSession: (id: number) => request<void>(`/api/chat/sessions/${id}`, { method: "DELETE" }),

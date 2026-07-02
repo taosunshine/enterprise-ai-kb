@@ -1,10 +1,10 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { api, ChatSession, Citation, DocumentItem, KnowledgeBase } from "./api";
+import { api, AUTH_EXPIRED_EVENT, ChatSession, Citation, DocumentItem, KnowledgeBase, RecycleBinItem } from "./api";
 import "./styles.css";
 
 type Message = { role: "user" | "assistant"; content: string; citations?: Citation[] };
-type View = "chat" | "creation" | "documents";
+type View = "chat" | "creation" | "documents" | "trash";
 type CreationTemplate = {
   id: string;
   title: string;
@@ -73,9 +73,9 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{icons[name]}</svg>;
 }
 
-function Login({ onReady }: { onReady: () => void }) {
-  const [email, setEmail] = useState("demo@example.com");
-  const [password, setPassword] = useState("password123");
+function Login({ onReady, notice }: { onReady: () => void; notice?: string }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   const submit = async (event: FormEvent, register = false) => {
@@ -108,6 +108,7 @@ function Login({ onReady }: { onReady: () => void }) {
           <span className="kicker">WELCOME BACK</span>
           <h2>登录知识工作台</h2>
           <p>继续探索企业知识，让创作更有依据。</p>
+          {notice && <div className="error">{notice}</div>}
           <label>工作邮箱<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label>登录密码<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
           {error && <div className="error">{error}</div>}
@@ -128,6 +129,7 @@ function Sidebar({ items, selectedId, sessions, activeSessionId, view, onView, o
       <button className={view === "chat" ? "active" : ""} onClick={() => onView("chat")}><Icon name="chat" />智能问答</button>
       <button className={view === "creation" ? "active" : ""} onClick={() => onView("creation")}><Icon name="grid" />创作中心<span className="soon ready">4 个模板</span></button>
       <button className={view === "documents" ? "active" : ""} onClick={() => onView("documents")}><Icon name="file" />文档管理</button>
+      <button className={view === "trash" ? "active" : ""} onClick={() => onView("trash")}><Icon name="trash" />回收站</button>
     </nav>
     <div className="nav-heading"><span>我的知识库</span><button onClick={onCreate} title="新建知识库"><Icon name="plus" size={15} /></button></div>
     <nav className="kb-nav">
@@ -152,7 +154,7 @@ function Sidebar({ items, selectedId, sessions, activeSessionId, view, onView, o
       </nav>
     </div>
     <div className="sidebar-footer">
-      <button><span className="avatar">DE</span><span><strong>Demo User</strong><small>个人工作区</small></span><Icon name="more" size={16} /></button>
+      <button><span className="avatar">知</span><span><strong>当前用户</strong><small>个人工作区</small></span><Icon name="more" size={16} /></button>
     </div>
   </aside>;
 }
@@ -161,7 +163,7 @@ function SourcePanel({ documents, citations, onUpload }: { documents: DocumentIt
   return <aside className="source-panel">
     <div className="source-head"><div><span className="kicker">KNOWLEDGE SOURCE</span><h3>资料与引用</h3></div><button className="icon-button"><Icon name="more" /></button></div>
     <div className="source-stat"><div className="progress-ring"><span>{documents.length}</span></div><div><strong>知识库资料</strong><small>{documents.filter((item) => item.status === "ready").length} 份已完成解析</small></div></div>
-    <label className="dropzone"><input type="file" multiple accept=".pdf,.docx,.md,.txt,.csv,.html,.htm" onChange={(e) => onUpload(e.target.files || undefined)} /><Icon name="upload" /><strong>添加资料</strong><span>可批量上传 PDF、DOCX、Markdown、TXT、CSV 或 HTML</span></label>
+    <label className="dropzone"><input type="file" multiple accept=".pdf,.docx,.md,.txt,.csv,.html,.htm,.png,.jpg,.jpeg,.webp" onChange={(e) => onUpload(e.target.files || undefined)} /><Icon name="upload" /><strong>添加资料</strong><span>可批量上传文档、表格或图片资料</span></label>
     <div className="panel-section-title"><span>{citations.length ? "本轮引用" : "最近资料"}</span><small>{citations.length || documents.length}</small></div>
     <div className="source-list">
       {citations.map((citation) => <div className="citation-card" key={citation.chunk_id}><span className="file-icon"><Icon name="file" /></span><div><strong>{citation.filename}{citation.page_number ? ` · 第 ${citation.page_number} 页` : ""}</strong><p>{citation.excerpt}</p><small>相关度 {Math.round(citation.score * 100)}%</small></div></div>)}
@@ -174,12 +176,37 @@ function SourcePanel({ documents, citations, onUpload }: { documents: DocumentIt
 
 function DocumentManager({ documents, selected, onUpload, onDelete, onReprocess }: { documents: DocumentItem[]; selected?: KnowledgeBase; onUpload: (files?: FileList) => void; onDelete: (document: DocumentItem) => void; onReprocess: (document: DocumentItem) => void }) {
   return <section className="document-manager">
-    <div className="manager-hero"><div><span className="kicker">DOCUMENT MANAGEMENT</span><h1>管理知识库资料</h1><p>上传、检查并维护「{selected?.name || "未选择知识库"}」中的文档。</p></div><label className="manager-upload"><input type="file" multiple accept=".pdf,.docx,.md,.txt,.csv,.html,.htm" onChange={(e) => onUpload(e.target.files || undefined)} /><Icon name="upload" />批量上传资料</label></div>
+    <div className="manager-hero"><div><span className="kicker">DOCUMENT MANAGEMENT</span><h1>管理知识库资料</h1><p>上传、检查并维护「{selected?.name || "未选择知识库"}」中的文档。</p></div><label className="manager-upload"><input type="file" multiple accept=".pdf,.docx,.md,.txt,.csv,.html,.htm,.png,.jpg,.jpeg,.webp" onChange={(e) => onUpload(e.target.files || undefined)} /><Icon name="upload" />批量上传资料</label></div>
     <div className="manager-summary"><div><strong>{documents.length}</strong><span>全部资料</span></div><div><strong>{documents.filter((item) => item.status === "ready").length}</strong><span>解析完成</span></div><div><strong>{documents.filter((item) => item.status === "processing").length}</strong><span>处理中</span></div><div><strong>{documents.filter((item) => item.status === "failed").length}</strong><span>解析失败</span></div></div>
     <div className="document-table">
       <div className="table-head"><span>文件名称</span><span>状态</span><span>上传时间</span><span>操作</span></div>
       {documents.map((document) => <div className="table-row" key={document.id}><span className="table-file"><span className="file-icon"><Icon name="file" /></span><span><strong>{document.filename}</strong><small>知识库文档</small></span></span><span><i className={`status-pill ${document.status}`}>{document.status === "ready" ? "解析完成" : document.status === "failed" ? "解析失败" : "处理中"}</i></span><span className="table-date">{new Date(document.created_at).toLocaleDateString("zh-CN")}</span><span className="table-actions"><button title="重新解析" onClick={() => onReprocess(document)}><Icon name="refresh" size={15} /></button><button title="删除文档" onClick={() => onDelete(document)}><Icon name="trash" size={15} /></button></span></div>)}
       {!documents.length && <div className="manager-empty"><Icon name="file" size={28} /><strong>知识库还是空的</strong><span>上传 PDF、DOCX、Markdown、TXT、CSV 或 HTML，系统会自动解析并生成向量。</span></div>}
+    </div>
+  </section>;
+}
+
+function TrashManager({ items, onRefresh, onRestore, onPurge }: { items: RecycleBinItem[]; onRefresh: () => void; onRestore: (item: RecycleBinItem) => void; onPurge: (item: RecycleBinItem) => void }) {
+  return <section className="document-manager">
+    <div className="manager-hero">
+      <div><span className="kicker">RECYCLE BIN</span><h1>回收站</h1><p>删除的知识库和文档默认保留 30 天，可恢复；永久删除需要再次输入完整名称。</p></div>
+      <button className="manager-upload" onClick={onRefresh} type="button"><Icon name="refresh" />刷新</button>
+    </div>
+    <div className="manager-summary trash-summary">
+      <div><strong>{items.length}</strong><span>回收站项目</span></div>
+      <div><strong>{items.filter((item) => item.item_type === "knowledge-base").length}</strong><span>知识库</span></div>
+      <div><strong>{items.filter((item) => item.item_type === "document").length}</strong><span>文档</span></div>
+      <div><strong>30</strong><span>默认保留天数</span></div>
+    </div>
+    <div className="document-table trash-table">
+      <div className="table-head"><span>名称</span><span>类型</span><span>剩余</span><span>操作</span></div>
+      {items.map((item) => <div className="table-row" key={`${item.item_type}-${item.item_id}`}>
+        <span className="table-file"><span className="file-icon"><Icon name={item.item_type === "knowledge-base" ? "book" : "file"} /></span><span><strong>{item.name}</strong><small>删除时间 {new Date(item.deleted_at).toLocaleString("zh-CN")}</small></span></span>
+        <span><i className="status-pill">{item.item_type === "knowledge-base" ? "知识库" : "文档"}</i></span>
+        <span className="table-date">{item.remaining_days} 天</span>
+        <span className="table-actions"><button title="恢复" onClick={() => onRestore(item)}><Icon name="refresh" size={15} /></button><button title="永久删除" onClick={() => onPurge(item)}><Icon name="trash" size={15} /></button></span>
+      </div>)}
+      {!items.length && <div className="manager-empty"><Icon name="trash" size={28} /><strong>回收站为空</strong><span>删除知识库或文档后，会在这里保留 30 天。</span></div>}
     </div>
   </section>;
 }
@@ -245,6 +272,7 @@ function Workspace() {
   const [selectedId, setSelectedId] = useState<number>();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [trashItems, setTrashItems] = useState<RecycleBinItem[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
   const [sessionId, setSessionId] = useState<number>();
@@ -263,15 +291,19 @@ function Workspace() {
 
   const refreshDocuments = async (id?: number) => {
     if (!id) return setDocuments([]);
-    try { setDocuments(await api.listDocuments(id)); } catch { setDocuments([]); }
+    try { setDocuments(await api.listDocuments(id)); } catch (e) { setStatus(e instanceof Error ? e.message : "加载资料失败"); }
   };
   const refreshSessions = async (id?: number) => {
     if (!id) return setSessions([]);
-    try { setSessions(await api.listChatSessions(id)); } catch { setSessions([]); }
+    try { setSessions(await api.listChatSessions(id)); } catch (e) { setStatus(e instanceof Error ? e.message : "加载历史失败"); }
+  };
+  const refreshTrash = async () => {
+    try { setTrashItems(await api.listTrash()); } catch (e) { setStatus(e instanceof Error ? e.message : "加载回收站失败"); }
   };
 
   useEffect(() => { refresh().catch((e) => setStatus(e.message)); }, []);
   useEffect(() => { refreshDocuments(selectedId); refreshSessions(selectedId); }, [selectedId]);
+  useEffect(() => { if (view === "trash") refreshTrash(); }, [view]);
   useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -319,11 +351,18 @@ function Workspace() {
     await refresh();
   };
   const deleteKb = async () => {
-    if (!selected || !window.confirm(`确认删除知识库「${selected.name}」及全部资料吗？`)) return;
-    await api.deleteKnowledgeBase(selected.id);
+    if (!selected) return;
+    const confirmation = window.prompt(`删除知识库前，请输入完整名称「${selected.name}」确认：`);
+    if (confirmation !== selected.name) {
+      if (confirmation !== null) setStatus("知识库名称不匹配，已取消删除。");
+      return;
+    }
+    await api.deleteKnowledgeBase(selected.id, confirmation);
     setSelectedId(undefined);
     setDocuments([]);
+    setStatus("知识库已移入回收站，将保留 30 天。");
     await refresh();
+    await refreshTrash();
   };
   const upload = async (files?: FileList) => {
     if (!files?.length || !selectedId) return;
@@ -353,9 +392,28 @@ function Workspace() {
   };
   const ask = (event: FormEvent) => { event.preventDefault(); askQuestion(question); };
   const deleteDocument = async (document: DocumentItem) => {
-    if (!window.confirm(`确认删除「${document.filename}」吗？`)) return;
+    if (!window.confirm(`确认将「${document.filename}」移入回收站吗？将保留 30 天。`)) return;
     await api.deleteDocument(document.id);
+    setStatus("文档已移入回收站，将保留 30 天。");
     await refreshDocuments(selectedId);
+    await refreshTrash();
+  };
+  const restoreTrashItem = async (item: RecycleBinItem) => {
+    await api.restoreTrashItem(item.item_type, item.item_id);
+    setStatus(`已恢复「${item.name}」。`);
+    await refresh();
+    await refreshDocuments(selectedId);
+    await refreshTrash();
+  };
+  const purgeTrashItem = async (item: RecycleBinItem) => {
+    const confirmation = window.prompt(`永久删除不可恢复。请输入完整名称「${item.name}」确认：`);
+    if (confirmation !== item.name) {
+      if (confirmation !== null) setStatus("名称不匹配，已取消永久删除。");
+      return;
+    }
+    await api.purgeTrashItem(item.item_type, item.item_id, confirmation);
+    setStatus(`已永久删除「${item.name}」。`);
+    await refreshTrash();
   };
   const reprocessDocument = async (document: DocumentItem) => {
     setStatus(`正在重新解析 ${document.filename}...`);
@@ -369,10 +427,10 @@ function Workspace() {
     <Sidebar items={knowledgeBases} selectedId={selectedId} sessions={sessions} activeSessionId={sessionId} view={view} onView={setView} onSelect={selectKb} onCreate={createKb} onNewChat={newChat} onSelectSession={selectSession} onDeleteSession={deleteSession} />
     <main className="workspace">
       <header className="topbar">
-        <div className="breadcrumb"><span>{view === "chat" ? "智能问答" : view === "creation" ? "创作中心" : "文档管理"}</span><Icon name="chevron" size={13} /><strong>{selected?.name || "未选择知识库"}</strong></div>
+        <div className="breadcrumb"><span>{view === "chat" ? "智能问答" : view === "creation" ? "创作中心" : view === "trash" ? "回收站" : "文档管理"}</span><Icon name="chevron" size={13} /><strong>{view === "trash" ? `${trashItems.length} 个项目` : selected?.name || "未选择知识库"}</strong></div>
         <div className="top-actions"><button className="search-button"><Icon name="search" size={16} />搜索 <kbd>⌘ /</kbd></button><button className="icon-button" title="编辑知识库" disabled={!selected} onClick={editKb}><Icon name="edit" /></button><button className="icon-button danger" title="删除知识库" disabled={!selected} onClick={deleteKb}><Icon name="trash" /></button><button className="logout-button" title="退出登录" onClick={() => { localStorage.removeItem("token"); location.reload(); }}><Icon name="logout" /></button></div>
       </header>
-      {view === "documents" ? <DocumentManager documents={documents} selected={selected} onUpload={upload} onDelete={deleteDocument} onReprocess={reprocessDocument} /> : view === "creation" ? <CreationCenter selectedId={selectedId} selected={selected} onComplete={() => refreshSessions(selectedId)} /> : <><section className="conversation">
+      {view === "documents" ? <DocumentManager documents={documents} selected={selected} onUpload={upload} onDelete={deleteDocument} onReprocess={reprocessDocument} /> : view === "trash" ? <TrashManager items={trashItems} onRefresh={refreshTrash} onRestore={restoreTrashItem} onPurge={purgeTrashItem} /> : view === "creation" ? <CreationCenter selectedId={selectedId} selected={selected} onComplete={() => refreshSessions(selectedId)} /> : <><section className="conversation">
         {!messages.length ? <div className="welcome">
           <div className="welcome-icon"><Icon name="spark" size={27} /></div>
           <span className="kicker">KNOWLEDGE ASSISTANT</span>
@@ -399,7 +457,16 @@ function Workspace() {
 
 function App() {
   const [ready, setReady] = useState(Boolean(localStorage.getItem("token")));
-  return ready ? <Workspace /> : <Login onReady={() => setReady(true)} />;
+  const [notice, setNotice] = useState("");
+  useEffect(() => {
+    const expire = () => {
+      setReady(false);
+      setNotice("登录状态已过期，请重新登录。知识库资料仍保存在服务器中。");
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, expire);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expire);
+  }, []);
+  return ready ? <Workspace /> : <Login notice={notice} onReady={() => { setNotice(""); setReady(true); }} />;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

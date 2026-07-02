@@ -4,6 +4,7 @@ Place one secret value per file in this directory:
 
 - `secret_key`
 - `llm_api_key`
+- `vision_api_key` (optional; defaults to `llm_api_key`)
 - `rerank_api_key` (optional)
 - `database_url` (optional production database connection string)
 

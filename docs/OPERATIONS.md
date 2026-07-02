@@ -2,8 +2,9 @@
 
 ## Upload limits
 
-Uploads accept PDF, Markdown, and TXT files. The API validates the suffix, rejects invalid PDF
-headers and binary-looking text files, and streams files with a hard byte limit.
+Uploads accept PDF, DOCX, Markdown, TXT, CSV, HTML, PNG, JPEG, and WebP files. The API validates
+the suffix and file signature where applicable, rejects binary-looking text files, and streams
+files with a hard byte limit.
 
 Configure:
 
@@ -40,9 +41,9 @@ and document content are not recorded.
 ## Secret files
 
 For Docker deployments, place one value per file in `secrets/secret_key`,
-`secrets/llm_api_key`, and optionally `secrets/rerank_api_key`. Compose mounts the directory
-read-only and configures `DATABASE_URL_FILE`, `SECRET_KEY_FILE`, `LLM_API_KEY_FILE`, and
-`RERANK_API_KEY_FILE`.
+`secrets/llm_api_key`, and optionally `secrets/vision_api_key` and `secrets/rerank_api_key`.
+Compose mounts the directory read-only and configures `DATABASE_URL_FILE`, `SECRET_KEY_FILE`,
+`LLM_API_KEY_FILE`, `VISION_API_KEY_FILE`, and `RERANK_API_KEY_FILE`.
 
 Environment variables remain available as a local-development fallback. Secret files and `.env`
 files are ignored by Git.
@@ -86,7 +87,30 @@ threshold is missed:
   -DocumentsDir "C:\path\to\knowledge-base-documents"
 ```
 
-Supported formats are PDF, DOCX, Markdown, TXT, CSV, and HTML. Evaluation cases may specify
+Supported formats are PDF, DOCX, Markdown, TXT, CSV, HTML, PNG, JPEG, and WebP. Evaluation cases may specify
 `expected_documents` so citation accuracy requires both relevant evidence and the correct source
 document. GitHub Actions runs the automated gate on every push and pull request; the live RAG gate
 remains local because it requires private model credentials and business documents.
+
+## OCR, tables, and image understanding
+
+PDF and DOCX tables are extracted into Markdown table chunks. Pages with little extractable text
+are rendered and sent to the configured vision model for OCR. Embedded document images and
+standalone PNG, JPEG, and WebP files are converted into searchable factual descriptions.
+
+The vision API must implement OpenAI-compatible multimodal chat completions. It reuses the LLM
+configuration by default, or can be configured separately:
+
+```dotenv
+VISION_ENABLED=true
+VISION_API_KEY=
+VISION_BASE_URL=
+VISION_MODEL=
+VISION_TIMEOUT_SECONDS=90
+VISION_MAX_IMAGES_PER_DOCUMENT=20
+OCR_MIN_PAGE_CHARACTERS=80
+```
+
+Vision failures degrade gracefully: text and locally extracted tables continue processing. Limit
+the number of analyzed images to control latency and cost, and include scanned pages, tables, and
+charts in the live quality-gate dataset before production use.

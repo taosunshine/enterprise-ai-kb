@@ -1,4 +1,6 @@
+import base64
 import json
+import mimetypes
 import re
 from collections import Counter
 from csv import reader
@@ -7,6 +9,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import fitz
+import httpx
 from docx import Document as WordDocument
 from sqlalchemy.orm import Session
 
@@ -46,31 +49,209 @@ class StructuredChunk:
     content_type: str = "body"
 
 
-def extract_pages(path: Path) -> list[tuple[int | None, str]]:
+@dataclass
+class ExtractedBlock:
+    page_number: int | None
+    content: str
+    content_type: str = "body"
+    section_title: str = ""
+
+
+def markdown_table(rows: list[list[str | None]]) -> str:
+    normalized = [[normalized_line(cell or "") for cell in row] for row in rows]
+    normalized = [row for row in normalized if any(row)]
+    if not normalized:
+        return ""
+    width = max(len(row) for row in normalized)
+    padded = [row + [""] * (width - len(row)) for row in normalized]
+    header = padded[0]
+    separator = ["---"] * width
+    return "\n".join(
+        "| " + " | ".join(row) + " |" for row in [header, separator, *padded[1:]]
+    )
+
+
+def vision_endpoint(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/chat/completions"
+
+
+def response_text(content: str | list[dict]) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    return "\n".join(
+        item.get("text", "").strip()
+        for item in content
+        if isinstance(item, dict) and item.get("type") == "text"
+    ).strip()
+
+
+def analyze_image(image_bytes: bytes, mime_type: str, prompt: str) -> str:
+    if not settings.vision_enabled:
+        return ""
+    api_key = settings.vision_api_key or settings.llm_api_key
+    base_url = settings.vision_base_url or settings.llm_base_url
+    model = settings.vision_model or settings.llm_model
+    if not api_key or not base_url or not model:
+        return ""
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    try:
+        response = httpx.post(
+            vision_endpoint(base_url),
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+                            },
+                        ],
+                    }
+                ],
+                "temperature": 0,
+            },
+            timeout=settings.vision_timeout_seconds,
+        )
+        response.raise_for_status()
+        return response_text(response.json()["choices"][0]["message"]["content"])
+    except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        return ""
+
+
+def extract_pdf_blocks(path: Path) -> list[ExtractedBlock]:
+    blocks: list[ExtractedBlock] = []
+    analyzed_images = 0
+    with fitz.open(path) as pdf:
+        for index, page in enumerate(pdf):
+            page_number = index + 1
+            text = page.get_text().strip()
+            if text:
+                blocks.append(ExtractedBlock(page_number, text))
+
+            try:
+                tables = page.find_tables()
+                for table_index, table in enumerate(tables.tables, start=1):
+                    content = markdown_table(table.extract())
+                    if content:
+                        blocks.append(
+                            ExtractedBlock(
+                                page_number,
+                                content,
+                                "table",
+                                f"第 {page_number} 页表格 {table_index}",
+                            )
+                        )
+            except (AttributeError, RuntimeError, ValueError):
+                pass
+
+            if len(normalized_line(text)) < settings.ocr_min_page_characters:
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                ocr_text = analyze_image(
+                    pixmap.tobytes("png"),
+                    "image/png",
+                    "请完整识别此扫描文档页。按原阅读顺序输出全部文字；表格请使用 Markdown "
+                    "表格；不要解释，不要省略数字。",
+                )
+                if ocr_text:
+                    blocks.append(ExtractedBlock(page_number, ocr_text, "ocr", "扫描页 OCR"))
+                continue
+
+            for image_index, image in enumerate(page.get_images(full=True), start=1):
+                if analyzed_images >= settings.vision_max_images_per_document:
+                    break
+                if image[2] < 128 or image[3] < 128:
+                    continue
+                extracted = pdf.extract_image(image[0])
+                extension = extracted.get("ext", "png")
+                mime_type = "image/jpeg" if extension in {"jpg", "jpeg"} else f"image/{extension}"
+                description = analyze_image(
+                    extracted["image"],
+                    mime_type,
+                    "请描述这张文档图片表达的信息，并提取图片中的文字、数字、图例和关键结论。"
+                    "只输出可用于知识库检索的事实，不要猜测。",
+                )
+                if description:
+                    blocks.append(
+                        ExtractedBlock(
+                            page_number,
+                            description,
+                            "image",
+                            f"第 {page_number} 页图片 {image_index}",
+                        )
+                    )
+                analyzed_images += 1
+    return blocks
+
+
+def extract_docx_blocks(path: Path) -> list[ExtractedBlock]:
+    document = WordDocument(path)
+    blocks: list[ExtractedBlock] = []
+    lines: list[str] = []
+    for paragraph in document.paragraphs:
+        text = normalized_line(paragraph.text)
+        if not text:
+            continue
+        lines.append(f"# {text}" if paragraph.style.name.startswith("Heading") else text)
+    if lines:
+        blocks.append(ExtractedBlock(None, "\n".join(lines)))
+    for table_index, table in enumerate(document.tables, start=1):
+        content = markdown_table([[cell.text for cell in row.cells] for row in table.rows])
+        if content:
+            blocks.append(ExtractedBlock(None, content, "table", f"表格 {table_index}"))
+    analyzed_images = 0
+    for part in document.part.related_parts.values():
+        if not getattr(part, "content_type", "").startswith("image/"):
+            continue
+        if analyzed_images >= settings.vision_max_images_per_document:
+            break
+        description = analyze_image(
+            part.blob,
+            part.content_type,
+            "请描述这张文档图片表达的信息，并提取图片中的文字、数字、图例和关键结论。"
+            "只输出可用于知识库检索的事实，不要猜测。",
+        )
+        if description:
+            blocks.append(
+                ExtractedBlock(None, description, "image", f"文档图片 {analyzed_images + 1}")
+            )
+        analyzed_images += 1
+    return blocks
+
+
+def extract_blocks(path: Path) -> list[ExtractedBlock]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        with fitz.open(path) as pdf:
-            return [(index + 1, page.get_text()) for index, page in enumerate(pdf)]
+        return extract_pdf_blocks(path)
     if suffix == ".docx":
-        document = WordDocument(path)
-        lines = []
-        for paragraph in document.paragraphs:
-            text = normalized_line(paragraph.text)
-            if not text:
-                continue
-            lines.append(f"# {text}" if paragraph.style.name.startswith("Heading") else text)
-        for table in document.tables:
-            for row in table.rows:
-                lines.append(" | ".join(normalized_line(cell.text) for cell in row.cells))
-        return [(None, "\n".join(lines))]
+        return extract_docx_blocks(path)
     if suffix == ".csv":
         rows = reader(path.read_text(encoding="utf-8-sig", errors="ignore").splitlines())
-        return [(None, "\n".join(" | ".join(normalized_line(cell) for cell in row) for row in rows))]
+        return [ExtractedBlock(None, markdown_table(list(rows)), "table", "CSV 表格")]
     if suffix in {".html", ".htm"}:
         parser = TextHTMLParser()
         parser.feed(path.read_text(encoding="utf-8", errors="ignore"))
-        return [(None, parser.text())]
-    return [(None, path.read_text(encoding="utf-8", errors="ignore"))]
+        return [ExtractedBlock(None, parser.text())]
+    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+        mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+        description = analyze_image(
+            path.read_bytes(),
+            mime_type,
+            "请完整识别图片中的文字、表格、数字和视觉信息，并总结可验证的关键事实。"
+            "表格请使用 Markdown 表格，不要猜测。",
+        )
+        return [ExtractedBlock(None, description, "image", "图片识别")] if description else []
+    return [ExtractedBlock(None, path.read_text(encoding="utf-8", errors="ignore"))]
+
+
+def extract_pages(path: Path) -> list[tuple[int | None, str]]:
+    pages: dict[int | None, list[str]] = {}
+    for block in extract_blocks(path):
+        pages.setdefault(block.page_number, []).append(block.content)
+    return [(page_number, "\n".join(parts)) for page_number, parts in pages.items()]
 
 
 def normalized_line(line: str) -> str:
@@ -184,17 +365,27 @@ def split_text(text: str, size: int = 800, overlap: int = 120) -> list[str]:
 
 def process_document(document_id: int, db: Session) -> None:
     document = db.get(Document, document_id)
-    if not document:
+    if not document or document.deleted_at is not None:
         raise ValueError("Document not found")
     document.status = "processing"
     document.error_message = ""
     document.chunks.clear()
     db.flush()
-    pages = extract_pages(Path(document.file_path))
-    repeated_lines = repeated_margin_lines(pages)
+    blocks = extract_blocks(Path(document.file_path))
+    body_pages: dict[int | None, list[str]] = {}
+    for block in blocks:
+        if block.content_type in {"body", "ocr"}:
+            body_pages.setdefault(block.page_number, []).append(block.content)
+    repeated_lines = repeated_margin_lines(
+        [(page_number, "\n".join(parts)) for page_number, parts in body_pages.items()]
+    )
     index = 0
-    for page_number, page_text in pages:
-        cleaned = clean_page_text(page_text, repeated_lines)
+    for block in blocks:
+        cleaned = (
+            clean_page_text(block.content, repeated_lines)
+            if block.content_type in {"body", "ocr"}
+            else block.content.strip()
+        )
         for item in structured_split(cleaned, settings.chunk_size, settings.chunk_overlap):
             if is_short_noise(item.content):
                 continue
@@ -202,11 +393,11 @@ def process_document(document_id: int, db: Session) -> None:
                 document_id=document.id,
                 content=item.content,
                 chunk_index=index,
-                page_number=page_number,
-                section_title=item.section_title,
+                page_number=block.page_number,
+                section_title=item.section_title or block.section_title,
                 char_start=item.char_start,
                 char_end=item.char_end,
-                content_type=item.content_type,
+                content_type=block.content_type,
             )
             db.add(chunk)
             db.flush()

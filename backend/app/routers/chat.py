@@ -99,7 +99,9 @@ def prepare_chat(
 ) -> tuple[KnowledgeBase, ChatSession, list[tuple[str, str]]]:
     knowledge_base = db.scalar(
         select(KnowledgeBase).where(
-            KnowledgeBase.id == payload.knowledge_base_id, KnowledgeBase.user_id == user.id
+            KnowledgeBase.id == payload.knowledge_base_id,
+            KnowledgeBase.user_id == user.id,
+            KnowledgeBase.deleted_at.is_(None),
         )
     )
     if not knowledge_base:

@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4.1-mini"
+    vision_enabled: bool = True
+    vision_api_key: str = ""
+    vision_base_url: str = ""
+    vision_model: str = ""
+    vision_timeout_seconds: int = 90
+    vision_max_images_per_document: int = 20
+    ocr_min_page_characters: int = 80
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_dimensions: int = 512
     retrieval_top_k: int = 8
@@ -33,6 +40,9 @@ class Settings(BaseSettings):
     task_retry_base_seconds: int = 15
     task_stale_after_seconds: int = 900
     task_eager: bool = False
+    recycle_bin_retention_days: int = 30
+    celery_broker_url: str = "redis://redis:6379/0"
+    celery_result_backend: str = "redis://redis:6379/1"
     upload_max_bytes: int = 25 * 1024 * 1024
     upload_max_documents_per_kb: int = 100
     auth_rate_limit: int = 10
@@ -44,6 +54,7 @@ class Settings(BaseSettings):
     database_url_file: Path | None = None
     secret_key_file: Path | None = None
     llm_api_key_file: Path | None = None
+    vision_api_key_file: Path | None = None
     rerank_api_key_file: Path | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -53,6 +64,7 @@ class Settings(BaseSettings):
             ("database_url", "database_url_file"),
             ("secret_key", "secret_key_file"),
             ("llm_api_key", "llm_api_key_file"),
+            ("vision_api_key", "vision_api_key_file"),
             ("rerank_api_key", "rerank_api_key_file"),
         ):
             path = getattr(self, file_field)

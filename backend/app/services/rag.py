@@ -98,7 +98,11 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
 def candidate_rows(db: Session, user_id: int, knowledge_base_id: int, query_vector: list[float]):
     base_filters = (
         KnowledgeBase.user_id == user_id,
+        KnowledgeBase.deleted_at.is_(None),
         Document.knowledge_base_id == knowledge_base_id,
+        Document.deleted_at.is_(None),
+        DocumentChunk.deleted_at.is_(None),
+        ChunkEmbedding.deleted_at.is_(None),
         Document.status == "ready",
     )
     if db.bind and db.bind.dialect.name == "postgresql":

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,6 +7,7 @@ from app.dependencies import get_current_user
 from app.models import KnowledgeBase, User
 from app.schemas import KnowledgeBaseCreate, KnowledgeBaseRead, KnowledgeBaseUpdate
 from app.services.audit import record_audit
+from app.services.recycle_bin import soft_delete_knowledge_base
 
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 
@@ -65,6 +64,7 @@ def update_knowledge_base(
 @router.delete("/{knowledge_base_id}", status_code=204)
 def delete_knowledge_base(
     knowledge_base_id: int,
+    confirmation: str,
     request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -76,11 +76,10 @@ def delete_knowledge_base(
     )
     if not item:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
-    document_paths = [Path(document.file_path) for document in item.documents]
-    db.delete(item)
+    if confirmation != item.name:
+        raise HTTPException(status_code=409, detail="Knowledge base name confirmation does not match")
+    soft_delete_knowledge_base(db, item, user.id)
     db.commit()
-    for path in document_paths:
-        path.unlink(missing_ok=True)
     record_audit(
         db, request, action="knowledge_base.delete", user_id=user.id,
         resource_type="knowledge_base", resource_id=knowledge_base_id

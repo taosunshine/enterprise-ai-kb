@@ -52,6 +52,15 @@ class DocumentDetail(DocumentRead):
     chunk_count: int
 
 
+class RecycleBinItem(BaseModel):
+    item_type: str
+    item_id: int
+    name: str
+    deleted_at: datetime
+    purge_after: datetime
+    remaining_days: int
+
+
 class ChatRequest(BaseModel):
     knowledge_base_id: int
     question: str = Field(min_length=1)
